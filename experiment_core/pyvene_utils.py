@@ -7,15 +7,15 @@ from typing import Sequence
 
 from . import _env  # noqa: F401
 
-import torch
 import pyvene.models.modeling_utils as modeling_utils
+import torch
 from pyvene import IntervenableConfig, IntervenableModel, RepresentationConfig
 from pyvene import RotatedSpaceIntervention, VanillaIntervention
 from pyvene.models.mlp.modelings_mlp import MLPForClassification as PyveneMLP
 
 from variable_width_mlp import VariableWidthMLPForClassification, logits_from_output
 
-from .constants import DEFAULT_SITE_MAX_UNITS, DEFAULT_SITE_POSITION, DEFAULT_SITE_UNIT
+from .defaults import DEFAULT_SITE_MAX_UNITS, DEFAULT_SITE_POSITION, DEFAULT_SITE_UNIT
 
 
 @dataclass(frozen=True)
@@ -31,12 +31,10 @@ class CanonicalSite:
 
     @property
     def subspace_dims(self) -> list[int]:
-        """Return the intervention dimensions for this canonical site."""
         return list(self.dims)
 
     @property
     def label(self) -> str:
-        """Return a short human-readable label for this site."""
         if len(self.dims) == 1:
             return f"L{self.layer}-d{self.dims[0]}"
         return f"L{self.layer}-d{self.dims[0]}:{self.dims[-1]}"
@@ -55,12 +53,10 @@ class DASSearchSpec:
 
     @property
     def subspace_dims(self) -> list[int]:
-        """Return the rotated coordinates swapped by this DAS candidate."""
         return list(range(self.subspace_dim))
 
     @property
     def label(self) -> str:
-        """Return a short human-readable label for this DAS candidate."""
         return f"L{self.layer}-k{self.subspace_dim}"
 
 
@@ -80,11 +76,7 @@ def enumerate_canonical_sites(
     """Split each requested hidden layer into contiguous intervention sites."""
     if resolution <= 0:
         raise ValueError(f"resolution must be positive, got {resolution}")
-    layer_ids = (
-        list(range(model.config.n_layer))
-        if layers is None
-        else [int(layer) for layer in layers]
-    )
+    layer_ids = list(range(model.config.n_layer)) if layers is None else [int(layer) for layer in layers]
     sites = []
     for layer in layer_ids:
         width = int(model.config.hidden_dims[layer])

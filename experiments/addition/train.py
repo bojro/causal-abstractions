@@ -1,8 +1,9 @@
 from pathlib import Path
 
-from addition_experiment.backbone import AdditionTrainConfig, train_backbone
-from addition_experiment.runtime import resolve_device
-from addition_experiment.scm import load_addition_problem
+from experiment_core.runtime import resolve_device
+
+from .backbone import AdditionTrainConfig, train_backbone
+from .scm import load_addition_problem
 
 
 SEED = 44
@@ -13,6 +14,12 @@ TRAIN_SIZE = 30000
 VALIDATION_SIZE = 4000
 HIDDEN_DIMS = (192, 192, 192, 192)
 TARGET_VARS = ("S1", "C1", "S2", "C2")
+CANONICAL_VARIABLE_MAPPING = {
+    "S1": "S1",
+    "C1": "C1",
+    "S2": "S2",
+    "C2": "C2",
+}
 LEARNING_RATE = 1e-3
 EPOCHS = 200
 TRAIN_BATCH_SIZE = 256
@@ -20,7 +27,11 @@ EVAL_BATCH_SIZE = 256
 
 
 def main() -> None:
-    problem = load_addition_problem(run_checks=True)
+    problem = load_addition_problem(
+        run_checks=True,
+        target_vars=tuple(TARGET_VARS),
+        canonical_variable_mapping=CANONICAL_VARIABLE_MAPPING,
+    )
     device = resolve_device(DEVICE)
     train_config = AdditionTrainConfig(
         seed=SEED,

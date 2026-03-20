@@ -16,8 +16,41 @@ import numpy as np
 from .runtime import ensure_parent_dir
 
 
+def _resolve_core_metrics(core_metrics: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """Normalize the payload's declared core metrics into a tuple."""
+    if not core_metrics:
+        return ("exact_acc", "mean_shared_digits")
+    return tuple(str(metric_name) for metric_name in core_metrics)
+
+
+def _metric_display_name(metric_name: str) -> str:
+    """Build a human-readable metric label."""
+    label_map = {
+        "exact_acc": "Exact Accuracy",
+        "mean_shared_digits": "Mean Shared Digits",
+    }
+    return label_map.get(str(metric_name), str(metric_name).replace("_", " ").title())
+
+
+def _metric_short_label(metric_name: str) -> str:
+    """Build a compact human-readable metric label."""
+    label_map = {
+        "exact_acc": "exact",
+        "mean_shared_digits": "shared",
+    }
+    return label_map.get(str(metric_name), str(metric_name).replace("_", " "))
+
+
+def _metric_summary_fields(values: list[float], metric_name: str) -> dict[str, float]:
+    """Build the standard mean/std field pair for one metric."""
+    metric_mean, metric_std = _mean_std(values)
+    return {
+        f"{metric_name}_mean": metric_mean,
+        f"{metric_name}_std": metric_std,
+    }
+
+
 def _mean_std(values: list[float]) -> tuple[float, float]:
-    """Return population mean/std, handling empty and singleton lists safely."""
     if not values:
         return 0.0, 0.0
     values_np = np.asarray(values, dtype=float)
@@ -35,11 +68,13 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
     methods_seen = set()
     target_vars = []
     seeds = []
+    core_metrics: tuple[str, ...] = ("exact_acc", "mean_shared_digits")
 
     for seed_run in seed_runs:
         seed = int(seed_run["seed"])
         seeds.append(seed)
         comparison = dict(seed_run["comparison"])
+        core_metrics = _resolve_core_metrics(comparison.get("core_metrics", core_metrics))
         target_vars = [str(variable) for variable in comparison.get("target_vars", target_vars)]
         method_runtime_seconds = {
             str(method): float(seconds)
@@ -57,17 +92,17 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
         )
 
         for record in comparison.get("method_summary", []):
-            method = str(record["method"])
+            method = str(record.get("method_id", record["method"]))
+            method_family = str(record["method"])
             methods_seen.add(method)
             average_record = {
                 "seed": seed,
                 "method": method,
-                "exact_acc": float(record["exact_acc"]),
-                "mean_shared_digits": float(record["mean_shared_digits"]),
-                "runtime_seconds": float(
-                    record.get("runtime_seconds", method_runtime_seconds.get(method, 0.0))
-                ),
+                "method_family": method_family,
+                "runtime_seconds": float(record.get("runtime_seconds", method_runtime_seconds.get(method_family, 0.0))),
             }
+            for metric_name in core_metrics:
+                average_record[metric_name] = float(record[metric_name])
             per_seed_method_summary.append(average_record)
             method_average_grouped[method].append(average_record)
             per_seed_method_runtime.append(
@@ -79,15 +114,16 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
             )
 
         for record in comparison.get("results", []):
-            method = str(record["method"])
+            method = str(record.get("method_id", record["method"]))
             variable = str(record["variable"])
             result_record = {
                 "seed": seed,
                 "method": method,
+                "method_family": str(record["method"]),
                 "variable": variable,
-                "exact_acc": float(record["exact_acc"]),
-                "mean_shared_digits": float(record["mean_shared_digits"]),
             }
+            for metric_name in core_metrics:
+                result_record[metric_name] = float(record[metric_name])
             per_seed_variable_results.append(result_record)
             variable_grouped[(method, variable)].append(result_record)
 
@@ -97,52 +133,46 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
     method_summary = []
     for method in methods:
         method_records = method_average_grouped[method]
-        exact_mean, exact_std = _mean_std([record["exact_acc"] for record in method_records])
-        shared_mean, shared_std = _mean_std(
-            [record["mean_shared_digits"] for record in method_records]
-        )
         runtime_mean, runtime_std = _mean_std([record["runtime_seconds"] for record in method_records])
-        method_summary.append(
-            {
-                "method": method,
-                "num_seeds": len(method_records),
-                "exact_acc_mean": exact_mean,
-                "exact_acc_std": exact_std,
-                "mean_shared_digits_mean": shared_mean,
-                "mean_shared_digits_std": shared_std,
-                "runtime_seconds_mean": runtime_mean,
-                "runtime_seconds_std": runtime_std,
-            }
-        )
+        summary_record: dict[str, object] = {
+            "method": method,
+            "num_seeds": len(method_records),
+            "runtime_seconds_mean": runtime_mean,
+            "runtime_seconds_std": runtime_std,
+        }
+        for metric_name in core_metrics:
+            summary_record.update(
+                _metric_summary_fields(
+                    [float(record[metric_name]) for record in method_records],
+                    metric_name,
+                )
+            )
+        method_summary.append(summary_record)
 
     variable_summary = []
     for method in methods:
         for variable in target_vars:
             records = variable_grouped.get((method, variable), [])
-            exact_mean, exact_std = _mean_std([record["exact_acc"] for record in records])
-            shared_mean, shared_std = _mean_std(
-                [record["mean_shared_digits"] for record in records]
-            )
-            variable_summary.append(
-                {
-                    "method": method,
-                    "variable": variable,
-                    "num_seeds": len(records),
-                    "exact_acc_mean": exact_mean,
-                    "exact_acc_std": exact_std,
-                    "mean_shared_digits_mean": shared_mean,
-                    "mean_shared_digits_std": shared_std,
-                }
-            )
+            summary_record = {
+                "method": method,
+                "variable": variable,
+                "num_seeds": len(records),
+            }
+            for metric_name in core_metrics:
+                summary_record.update(
+                    _metric_summary_fields(
+                        [float(record[metric_name]) for record in records],
+                        metric_name,
+                    )
+                )
+            variable_summary.append(summary_record)
 
-    backbone_exact_mean, backbone_exact_std = _mean_std(
-        [record["exact_acc"] for record in backbone_factual]
-    )
-
+    backbone_exact_mean, backbone_exact_std = _mean_std([record["exact_acc"] for record in backbone_factual])
     return {
         "seeds": seeds,
         "methods": methods,
         "target_vars": target_vars,
+        "core_metrics": list(core_metrics),
         "seed_runs": seed_runs,
         "backbone_factual_validation": backbone_factual,
         "backbone_factual_validation_summary": {
@@ -157,6 +187,7 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
         "variable_summary_across_seeds": variable_summary,
     }
 
+
 def _plot_mean_std_bars(
     records: list[dict[str, object]],
     output_path: Path,
@@ -165,12 +196,10 @@ def _plot_mean_std_bars(
     ylabel: str,
     title: str,
 ) -> str:
-    """Plot one bar per method with cross-seed standard-deviation error bars."""
     methods = [str(record["method"]).upper() for record in records]
     means = [float(record[mean_key]) for record in records]
     stds = [float(record[std_key]) for record in records]
     x = np.arange(len(methods))
-
     fig, ax = plt.subplots(figsize=(8, 4.8), constrained_layout=True)
     ax.bar(x, means, yerr=stds, capsize=6)
     ax.set_xticks(x, methods)
@@ -193,7 +222,6 @@ def _plot_grouped_mean_std_bars(
     group_order: list[str] | None = None,
     series_order: list[str] | None = None,
 ) -> str:
-    """Plot grouped mean/std bars, such as variables grouped with one bar per method."""
     if group_order is None:
         group_values = sorted({str(record[group_key]) for record in records})
     else:
@@ -203,11 +231,7 @@ def _plot_grouped_mean_std_bars(
     else:
         series_values = [str(value) for value in series_order]
 
-    record_map = {
-        (str(record[group_key]), str(record[series_key])): record
-        for record in records
-    }
-
+    record_map = {(str(record[group_key]), str(record[series_key])): record for record in records}
     x = np.arange(len(group_values), dtype=float)
     width = 0.8 / max(len(series_values), 1)
     offsets = (np.arange(len(series_values), dtype=float) - (len(series_values) - 1) / 2.0) * width
@@ -220,14 +244,7 @@ def _plot_grouped_mean_std_bars(
             record = record_map.get((group, series))
             means.append(float(record[mean_key]) if record is not None else 0.0)
             stds.append(float(record[std_key]) if record is not None else 0.0)
-        ax.bar(
-            x + offsets[index],
-            means,
-            width=width,
-            yerr=stds,
-            capsize=5,
-            label=str(series).upper(),
-        )
+        ax.bar(x + offsets[index], means, width=width, yerr=stds, capsize=5, label=str(series).upper())
     ax.set_xticks(x, group_values)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -243,65 +260,58 @@ def save_seed_sweep_plots(payload: dict[str, object], output_path: str | Path) -
     plot_dir = output_path.parent
     ensure_parent_dir(output_path)
     plot_dir.mkdir(parents=True, exist_ok=True)
-
-    plot_paths = {
-        "plot_dir": str(plot_dir),
-        "average_exact_summary": _plot_mean_std_bars(
+    plot_paths = {"plot_dir": str(plot_dir)}
+    core_metrics = _resolve_core_metrics(payload.get("core_metrics"))
+    for metric_name in core_metrics:
+        metric_slug = str(metric_name)
+        average_plot_key = "average_exact_summary" if metric_slug == "exact_acc" else (
+            "average_shared_summary" if metric_slug == "mean_shared_digits" else f"average_{metric_slug}_summary"
+        )
+        variable_plot_key = "variable_exact_summary" if metric_slug == "exact_acc" else (
+            "variable_shared_summary" if metric_slug == "mean_shared_digits" else f"variable_{metric_slug}_summary"
+        )
+        average_filename = "average_exact_summary.png" if metric_slug == "exact_acc" else (
+            "average_shared_summary.png" if metric_slug == "mean_shared_digits" else f"average_{metric_slug}_summary.png"
+        )
+        variable_filename = "variable_exact_summary.png" if metric_slug == "exact_acc" else (
+            "variable_shared_summary.png" if metric_slug == "mean_shared_digits" else f"variable_{metric_slug}_summary.png"
+        )
+        plot_paths[average_plot_key] = _plot_mean_std_bars(
             records=list(payload.get("method_summary_across_seeds", [])),
-            output_path=plot_dir / "average_exact_summary.png",
-            mean_key="exact_acc_mean",
-            std_key="exact_acc_std",
-            ylabel="Average Exact Accuracy",
-            title="Average exact accuracy mean +/- std across seeds",
-        ),
-        "average_shared_summary": _plot_mean_std_bars(
-            records=list(payload.get("method_summary_across_seeds", [])),
-            output_path=plot_dir / "average_shared_summary.png",
-            mean_key="mean_shared_digits_mean",
-            std_key="mean_shared_digits_std",
-            ylabel="Average Mean Shared Digits",
-            title="Average shared-digit mean +/- std across seeds",
-        ),
-        "variable_exact_summary": _plot_grouped_mean_std_bars(
+            output_path=plot_dir / average_filename,
+            mean_key=f"{metric_slug}_mean",
+            std_key=f"{metric_slug}_std",
+            ylabel=f"Average {_metric_display_name(metric_slug)}",
+            title=f"Average {_metric_display_name(metric_slug).lower()} mean +/- std across seeds",
+        )
+        plot_paths[variable_plot_key] = _plot_grouped_mean_std_bars(
             records=list(payload.get("variable_summary_across_seeds", [])),
-            output_path=plot_dir / "variable_exact_summary.png",
+            output_path=plot_dir / variable_filename,
             group_key="variable",
             series_key="method",
-            mean_key="exact_acc_mean",
-            std_key="exact_acc_std",
-            ylabel="Per-Variable Exact Accuracy",
-            title="Per-variable exact accuracy mean +/- std across seeds",
+            mean_key=f"{metric_slug}_mean",
+            std_key=f"{metric_slug}_std",
+            ylabel=f"Per-Variable {_metric_display_name(metric_slug)}",
+            title=f"Per-variable {_metric_display_name(metric_slug).lower()} mean +/- std across seeds",
             group_order=[str(value) for value in payload.get("target_vars", [])],
             series_order=[str(value) for value in payload.get("methods", [])],
-        ),
-        "variable_shared_summary": _plot_grouped_mean_std_bars(
-            records=list(payload.get("variable_summary_across_seeds", [])),
-            output_path=plot_dir / "variable_shared_summary.png",
-            group_key="variable",
-            series_key="method",
-            mean_key="mean_shared_digits_mean",
-            std_key="mean_shared_digits_std",
-            ylabel="Per-Variable Mean Shared Digits",
-            title="Per-variable shared-digit mean +/- std across seeds",
-            group_order=[str(value) for value in payload.get("target_vars", [])],
-            series_order=[str(value) for value in payload.get("methods", [])],
-        ),
-        "runtime_summary": _plot_mean_std_bars(
-            records=list(payload.get("method_summary_across_seeds", [])),
-            output_path=plot_dir / "runtime_summary.png",
-            mean_key="runtime_seconds_mean",
-            std_key="runtime_seconds_std",
-            ylabel="Runtime (s)",
-            title="Method runtime mean +/- std across seeds",
-        ),
-    }
+        )
+    plot_paths["runtime_summary"] = _plot_mean_std_bars(
+        records=list(payload.get("method_summary_across_seeds", [])),
+        output_path=plot_dir / "runtime_summary.png",
+        mean_key="runtime_seconds_mean",
+        std_key="runtime_seconds_std",
+        ylabel="Runtime (s)",
+        title="Method runtime mean +/- std across seeds",
+    )
     return plot_paths
 
 
 def format_seed_sweep_summary(payload: dict[str, object]) -> str:
     """Format a compact text summary of the aggregated multi-seed results."""
+    core_metrics = _resolve_core_metrics(payload.get("core_metrics"))
     lines = [
-        "Addition Seed Sweep Summary",
+        "Experiment Seed Sweep Summary",
         f"seeds: {', '.join(str(seed) for seed in payload.get('seeds', []))}",
         "",
         "Backbone Factual Validation",
@@ -316,11 +326,14 @@ def format_seed_sweep_summary(payload: dict[str, object]) -> str:
     lines.append("")
     lines.append("Method Average Across Seeds")
     for record in payload.get("method_summary_across_seeds", []):
+        metric_bits = ", ".join(
+            f"{_metric_short_label(metric_name)}={float(record[f'{metric_name}_mean']):.4f} +/- "
+            f"{float(record[f'{metric_name}_std']):.4f}"
+            for metric_name in core_metrics
+        )
         lines.append(
             f"{str(record['method']).upper()}: "
-            f"exact={float(record['exact_acc_mean']):.4f} +/- {float(record['exact_acc_std']):.4f}, "
-            f"shared={float(record['mean_shared_digits_mean']):.4f} +/- "
-            f"{float(record['mean_shared_digits_std']):.4f}, "
+            f"{metric_bits}, "
             f"runtime_s={float(record['runtime_seconds_mean']):.2f} +/- "
             f"{float(record['runtime_seconds_std']):.2f}"
         )
@@ -329,11 +342,13 @@ def format_seed_sweep_summary(payload: dict[str, object]) -> str:
         lines.append("")
         lines.append("Per-Variable Summary Across Seeds")
         for record in variable_summary:
+            metric_bits = ", ".join(
+                f"{_metric_short_label(metric_name)}={float(record[f'{metric_name}_mean']):.4f} +/- "
+                f"{float(record[f'{metric_name}_std']):.4f}"
+                for metric_name in core_metrics
+            )
             lines.append(
                 f"{str(record['method']).upper()} [{str(record['variable'])}]: "
-                f"exact={float(record['exact_acc_mean']):.4f} +/- "
-                f"{float(record['exact_acc_std']):.4f}, "
-                f"shared={float(record['mean_shared_digits_mean']):.4f} +/- "
-                f"{float(record['mean_shared_digits_std']):.4f}"
+                f"{metric_bits}"
             )
     return "\n".join(lines)

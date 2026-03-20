@@ -1,4 +1,4 @@
-"""Metrics for exact-match and shared-digit counterfactual evaluation."""
+"""Addition-specific evaluation metrics."""
 
 from __future__ import annotations
 

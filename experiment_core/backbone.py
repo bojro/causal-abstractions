@@ -1,4 +1,4 @@
-"""Backbone model training, loading, checkpointing, and factual evaluation."""
+"""Generic classifier backbone training, loading, and factual evaluation."""
 
 from __future__ import annotations
 
@@ -15,34 +15,30 @@ from variable_width_mlp import (
     load_variable_width_mlp_checkpoint,
 )
 
-from .constants import (
+from .adapter import ExperimentAdapter
+from .defaults import (
     DEFAULT_ACTIVATION,
-    DEFAULT_CHECKPOINT_PATH,
     DEFAULT_DROPOUT,
     DEFAULT_FACTUAL_TRAIN_SIZE,
     DEFAULT_FACTUAL_VALIDATION_SIZE,
     DEFAULT_HIDDEN_DIMS,
-    DEFAULT_TARGET_VARS,
-    INPUT_DIM,
-    NUM_CLASSES,
 )
 from .runtime import ensure_parent_dir, set_seed
-from .scm import AdditionProblem, compute_states_for_digits, digits_to_inputs_embeds, sample_digit_rows
 
 
 @dataclass(frozen=True)
-class AdditionTrainConfig:
-    """Configuration for supervised training and loading of the addition backbone."""
+class ClassifierTrainConfig:
+    """Configuration for supervised training and loading of a classifier backbone."""
 
     seed: int = 42
     n_train: int = DEFAULT_FACTUAL_TRAIN_SIZE
     n_validation: int = DEFAULT_FACTUAL_VALIDATION_SIZE
     hidden_dims: tuple[int, ...] = DEFAULT_HIDDEN_DIMS
-    input_dim: int = INPUT_DIM
-    num_classes: int = NUM_CLASSES
+    input_dim: int = 0
+    num_classes: int = 0
     dropout: float = DEFAULT_DROPOUT
     activation: str = DEFAULT_ACTIVATION
-    abstract_variables: tuple[str, ...] = DEFAULT_TARGET_VARS
+    abstract_variables: tuple[str, ...] = ()
     learning_rate: float = 2e-3
     train_epochs: int = 20
     train_batch_size: int = 256
@@ -50,20 +46,7 @@ class AdditionTrainConfig:
     verbose: bool = True
 
 
-def build_factual_tensors(
-    problem: AdditionProblem,
-    size: int,
-    seed: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Sample supervised addition examples and convert them to tensors."""
-    digits = sample_digit_rows(size, seed)
-    states = compute_states_for_digits(digits)
-    inputs = digits_to_inputs_embeds(digits, problem.input_var_order)
-    labels = torch.tensor(states["O"], dtype=torch.long)
-    return inputs, labels
-
-
-def evaluate_factual_model(
+def evaluate_classifier_backbone(
     model: VariableWidthMLPForClassification,
     inputs: torch.Tensor,
     labels: torch.Tensor,
@@ -90,29 +73,21 @@ def save_backbone_checkpoint(
     model: VariableWidthMLPForClassification,
     config: VariableWidthMLPConfig,
     checkpoint_path: str | Path,
-    seed: int,
-    abstract_variables: tuple[str, ...],
+    metadata: dict[str, object],
 ) -> None:
-    """Write the trained MLP checkpoint and minimal metadata to disk."""
+    """Write the trained classifier checkpoint and experiment metadata to disk."""
     ensure_parent_dir(checkpoint_path)
     payload = {
         "model_state_dict": model.state_dict(),
         "model_config": config.to_dict(),
-        "metadata": {
-            "seed": seed,
-            "task": "two_digit_base10_addition_onehot",
-            "abstract_variables": list(abstract_variables),
-            "scm_variables": ["A1", "B1", "A2", "B2", "S1", "C1", "S2", "C2"],
-            "target": "O",
-            "output_classes": list(range(NUM_CLASSES)),
-        },
+        "metadata": metadata,
     }
     torch.save(payload, checkpoint_path)
 
 
 def checkpoint_matches_train_config(
     checkpoint: dict[str, object],
-    train_config: AdditionTrainConfig,
+    train_config: ClassifierTrainConfig,
 ) -> bool:
     """Check whether an existing checkpoint matches the requested model spec."""
     model_config = checkpoint.get("model_config", {})
@@ -126,18 +101,20 @@ def checkpoint_matches_train_config(
     )
 
 
-def train_backbone(
-    problem: AdditionProblem,
-    train_config: AdditionTrainConfig,
-    checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH,
+def train_classifier_backbone(
+    *,
+    problem,
+    adapter: ExperimentAdapter,
+    train_config: ClassifierTrainConfig,
+    checkpoint_path: str | Path,
     device: torch.device | str = "cpu",
 ) -> tuple[VariableWidthMLPForClassification, VariableWidthMLPConfig, dict[str, object]]:
-    """Train the backbone MLP and return the model, config, and metrics."""
+    """Train the classifier backbone and return the model, config, and metrics."""
     device = torch.device(device)
     set_seed(train_config.seed)
 
-    x_train, y_train = build_factual_tensors(problem, train_config.n_train, train_config.seed + 1)
-    x_validation, y_validation = build_factual_tensors(
+    x_train, y_train = adapter.build_factual_tensors(problem, train_config.n_train, train_config.seed + 1)
+    x_validation, y_validation = adapter.build_factual_tensors(
         problem,
         train_config.n_validation,
         train_config.seed + 2,
@@ -187,7 +164,7 @@ def train_backbone(
             running_loss += float(loss.detach().cpu()) * batch_inputs.shape[0]
         epoch_loss = running_loss / len(loader.dataset)
         loss_history.append(epoch_loss)
-        epoch_validation_metrics = evaluate_factual_model(
+        epoch_validation_metrics = evaluate_classifier_backbone(
             model=model,
             inputs=x_validation,
             labels=y_validation,
@@ -206,16 +183,12 @@ def train_backbone(
                 f"| val_exact_acc={epoch_validation_metrics['exact_acc']:.4f}"
             )
         if perfect_validation_streak >= 5:
-            stopping_reason = (
-                "perfect_validation_exact_acc "
-                ">= 1.0000 "
-                "for 5 epochs"
-            )
+            stopping_reason = "perfect_validation_exact_acc >= 1.0000 for 5 epochs"
             if train_config.verbose:
                 print(f"Stopping early | reason={stopping_reason}")
             break
 
-    factual_metrics = validation_history[-1] if validation_history else evaluate_factual_model(
+    factual_metrics = validation_history[-1] if validation_history else evaluate_classifier_backbone(
         model=model,
         inputs=x_validation,
         labels=y_validation,
@@ -223,11 +196,10 @@ def train_backbone(
         device=device,
     )
     save_backbone_checkpoint(
-        model,
-        config,
-        checkpoint_path,
-        train_config.seed,
-        train_config.abstract_variables,
+        model=model,
+        config=config,
+        checkpoint_path=checkpoint_path,
+        metadata=adapter.build_checkpoint_metadata(train_config),
     )
     return model, config, {
         "train_loss_history": loss_history,
@@ -240,35 +212,35 @@ def train_backbone(
     }
 
 
-def load_backbone(
-    problem: AdditionProblem,
-    checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH,
+def load_classifier_backbone(
+    *,
+    problem,
+    adapter: ExperimentAdapter,
+    checkpoint_path: str | Path,
     device: torch.device | str = "cpu",
-    train_config: AdditionTrainConfig | None = None,
+    train_config: ClassifierTrainConfig | None = None,
 ) -> tuple[VariableWidthMLPForClassification, VariableWidthMLPConfig, dict[str, object]]:
     """Load an existing checkpoint and fail if it is missing or incompatible."""
     checkpoint_path = Path(checkpoint_path)
     device = torch.device(device)
     if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Checkpoint not found at {checkpoint_path}. Run addition_train.py first to create it."
-        )
+        raise FileNotFoundError(f"Checkpoint not found at {checkpoint_path}. Train a backbone first.")
 
     checkpoint = torch.load(str(checkpoint_path), map_location=device)
-    eval_config = train_config or AdditionTrainConfig()
+    eval_config = train_config or ClassifierTrainConfig()
     if not checkpoint_matches_train_config(checkpoint, eval_config):
         raise ValueError(
             f"Checkpoint at {checkpoint_path} does not match the requested model spec. "
-            "Run addition_train.py to regenerate models/addition_mlp.pt for the current config."
+            "Regenerate the checkpoint for the current config."
         )
 
     model, config, checkpoint = load_variable_width_mlp_checkpoint(str(checkpoint_path), device)
-    x_validation, y_validation = build_factual_tensors(
+    x_validation, y_validation = adapter.build_factual_tensors(
         problem,
         eval_config.n_validation,
         eval_config.seed + 2,
     )
-    factual_metrics = evaluate_factual_model(
+    factual_metrics = evaluate_classifier_backbone(
         model=model,
         inputs=x_validation,
         labels=y_validation,

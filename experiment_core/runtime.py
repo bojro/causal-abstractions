@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import platform
 import random
+import sys
+import warnings
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
@@ -16,12 +20,19 @@ def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def resolve_device(device: str | None = None) -> torch.device:
     """Choose an explicit device, falling back to CPU when unavailable."""
     if device is not None:
         if device == "cuda" and not torch.cuda.is_available():
+            warnings.warn(
+                "Requested device 'cuda' is unavailable; falling back to CPU.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return torch.device("cpu")
         return torch.device(device)
     if torch.cuda.is_available():
@@ -59,3 +70,39 @@ def write_json(path: str | Path, payload: Any) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(to_serializable(payload), handle, indent=2, sort_keys=True)
         handle.write("\n")
+
+
+def _package_version(package_name: str) -> str | None:
+    """Return an installed package version when available."""
+    try:
+        return importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
+def collect_environment_metadata(
+    device: torch.device | str,
+    requested_device: str | None = None,
+) -> dict[str, object]:
+    """Collect lightweight environment metadata for reproducible experiment outputs."""
+    resolved_device = torch.device(device)
+    return {
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "device": str(resolved_device),
+        "requested_device": None if requested_device is None else str(requested_device),
+        "device_resolution": {
+            "requested": None if requested_device is None else str(requested_device),
+            "resolved": str(resolved_device),
+            "used_fallback": requested_device is not None and str(requested_device) != str(resolved_device),
+        },
+        "packages": {
+            "matplotlib": _package_version("matplotlib"),
+            "numpy": _package_version("numpy"),
+            "pot": _package_version("pot"),
+            "pyvene": _package_version("pyvene"),
+            "scipy": _package_version("scipy"),
+            "torch": _package_version("torch"),
+            "tqdm": _package_version("tqdm"),
+        },
+    }

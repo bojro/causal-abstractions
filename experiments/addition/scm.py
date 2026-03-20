@@ -7,12 +7,12 @@ from typing import Any
 
 import numpy as np
 import torch
-
-from . import _env  # noqa: F401
-
 from pyvene import CausalModel
 
+from experiment_core.experiment_spec import ExperimentSpec
+
 from .constants import CANONICAL_INPUT_VARS, DEFAULT_TARGET_VARS
+from .spec import build_addition_experiment_spec
 
 
 ONE_HOT_DIGITS = tuple(np.eye(10, dtype=np.float32)[digit] for digit in range(10))
@@ -24,6 +24,7 @@ class AdditionProblem:
 
     causal_model: CausalModel
     input_var_order: tuple[str, ...]
+    experiment_spec: ExperimentSpec
 
 
 def as_digit(value: Any) -> int:
@@ -61,7 +62,6 @@ def build_addition_causal_model() -> CausalModel:
     }
 
     def filler() -> np.ndarray:
-        """Provide a default digit input for root SCM variables."""
         return ONE_HOT_DIGITS[0]
 
     functions = {
@@ -211,16 +211,26 @@ def verify_input_var_order(causal_model: CausalModel, input_var_order: tuple[str
         raise AssertionError(f"Expected input order {input_var_order}, got {inferred}")
 
 
-def load_addition_problem(run_checks: bool = True) -> AdditionProblem:
+def load_addition_problem(
+    run_checks: bool = True,
+    *,
+    target_vars: tuple[str, ...] = DEFAULT_TARGET_VARS,
+    canonical_variable_mapping: dict[str, str] | None = None,
+) -> AdditionProblem:
     """Build the addition SCM bundle and optionally run consistency checks."""
     causal_model = build_addition_causal_model()
     input_var_order = infer_input_var_order(causal_model)
+    experiment_spec = build_addition_experiment_spec(
+        target_vars=tuple(target_vars),
+        canonical_variable_mapping=canonical_variable_mapping,
+    )
     if run_checks:
         verify_scm_truth_table(causal_model)
         verify_input_var_order(causal_model, input_var_order)
     return AdditionProblem(
         causal_model=causal_model,
         input_var_order=input_var_order,
+        experiment_spec=experiment_spec,
     )
 
 
@@ -235,7 +245,7 @@ def verify_counterfactual_labels_with_scm(
     for index in range(size):
         base_assignment = assignment_from_digits(base_digits[index])
         source_assignment = assignment_from_digits(source_digits[index])
-        for var in DEFAULT_TARGET_VARS:
+        for var in problem.experiment_spec.local_target_vars:
             expected = int(
                 problem.causal_model.run_interchange(base_assignment, {var: source_assignment})["O"]
             )

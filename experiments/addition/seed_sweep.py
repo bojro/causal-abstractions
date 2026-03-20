@@ -4,16 +4,19 @@ from pathlib import Path
 
 import numpy as np
 
-from addition_experiment.backbone import AdditionTrainConfig, load_backbone, train_backbone
-from addition_experiment.compare_runner import CompareExperimentConfig, run_comparison_with_model
-from addition_experiment.reporting import write_text_report
-from addition_experiment.runtime import resolve_device, write_json
-from addition_experiment.scm import load_addition_problem
-from addition_experiment.seed_sweep import (
+from experiment_core.compare_runner import CompareExperimentConfig, run_comparison_with_model
+from experiment_core.runtime import resolve_device, write_json
+from experiment_core.seed_sweep import (
     build_seed_sweep_payload,
     format_seed_sweep_summary,
     save_seed_sweep_plots,
 )
+from experiment_core.reporting import write_text_report
+
+from .backbone import AdditionTrainConfig, load_backbone, train_backbone
+from .compare import CANONICAL_VARIABLE_MAPPING
+from .scm import load_addition_problem
+from .spec import build_addition_adapter
 
 
 SEEDS = (41, 42, 43, 44, 45)
@@ -42,7 +45,10 @@ TEST_PAIR_SIZE = 5000
 BATCH_SIZE = 128
 RESOLUTION = 1
 FGW_ALPHA = 0.5
-OT_TOP_K_VALUES = tuple(range(1,100))
+OT_SITE_POLICY = "current"
+OT_PCA_COMPONENTS = 8
+OT_PCA_CANDIDATE_COUNT = 128
+OT_TOP_K_VALUES = tuple(range(1, 100))
 OT_LAMBDAS = tuple(np.arange(0.1, 2.0 + 1e-9, 0.1))
 
 DAS_MAX_EPOCHS = 1000
@@ -55,7 +61,6 @@ DAS_LAYERS = None
 
 
 def build_train_config(seed: int) -> AdditionTrainConfig:
-    """Build the backbone training config shared across all seeds in the sweep."""
     return AdditionTrainConfig(
         seed=seed,
         n_train=FACTUAL_TRAIN_SIZE,
@@ -70,14 +75,13 @@ def build_train_config(seed: int) -> AdditionTrainConfig:
 
 
 def build_compare_config(seed: int, checkpoint_path: Path, run_dir: Path) -> CompareExperimentConfig:
-    """Build the per-seed comparison config shared across all seeds in the sweep."""
     return CompareExperimentConfig(
         seed=seed,
         checkpoint_path=checkpoint_path,
         output_path=run_dir / "addition_compare_results.json",
         summary_path=run_dir / "addition_compare_summary.txt",
+        requested_device=DEVICE,
         methods=tuple(METHODS),
-        factual_validation_size=FACTUAL_VALIDATION_SIZE,
         train_pair_size=TRAIN_PAIR_SIZE,
         calibration_pair_size=CALIBRATION_PAIR_SIZE,
         test_pair_size=TEST_PAIR_SIZE,
@@ -87,6 +91,9 @@ def build_compare_config(seed: int, checkpoint_path: Path, run_dir: Path) -> Com
         fgw_alpha=FGW_ALPHA,
         ot_top_k_values=OT_TOP_K_VALUES,
         ot_lambdas=tuple(OT_LAMBDAS),
+        ot_site_policy=OT_SITE_POLICY,
+        ot_pca_components=OT_PCA_COMPONENTS,
+        ot_pca_candidate_count=OT_PCA_CANDIDATE_COUNT,
         das_max_epochs=DAS_MAX_EPOCHS,
         das_min_epochs=DAS_MIN_EPOCHS,
         das_plateau_patience=DAS_PLATEAU_PATIENCE,
@@ -97,8 +104,7 @@ def build_compare_config(seed: int, checkpoint_path: Path, run_dir: Path) -> Com
     )
 
 
-def load_or_train_backbone(problem, device, seed: int, checkpoint_path: Path):
-    """Train or reuse one backbone checkpoint for the requested seed."""
+def load_or_train_backbone(problem, adapter, device, seed: int, checkpoint_path: Path):
     train_config = build_train_config(seed)
     if RETRAIN_BACKBONES or not checkpoint_path.exists():
         model, _, backbone_meta = train_backbone(
@@ -119,7 +125,6 @@ def load_or_train_backbone(problem, device, seed: int, checkpoint_path: Path):
 
 
 def print_loaded_backbone_validation(backbone_meta: dict[str, object]) -> None:
-    """Print the factual validation accuracy for a reused checkpoint."""
     factual_metrics = dict(backbone_meta.get("factual_validation_metrics", {}))
     exact_acc = float(factual_metrics.get("exact_acc", 0.0))
     num_examples = int(factual_metrics.get("num_examples", 0))
@@ -131,7 +136,15 @@ def print_loaded_backbone_validation(backbone_meta: dict[str, object]) -> None:
 
 
 def main() -> None:
-    problem = load_addition_problem(run_checks=True)
+    problem = load_addition_problem(
+        run_checks=True,
+        target_vars=tuple(TARGET_VARS),
+        canonical_variable_mapping=CANONICAL_VARIABLE_MAPPING,
+    )
+    adapter = build_addition_adapter(
+        target_vars=tuple(TARGET_VARS),
+        canonical_variable_mapping=CANONICAL_VARIABLE_MAPPING,
+    )
     device = resolve_device(DEVICE)
     seed_runs = []
 
@@ -141,6 +154,7 @@ def main() -> None:
         print(f"[{index}/{len(SEEDS)}] seed={seed} | checkpoint={checkpoint_path}")
         model, backbone_meta, backbone_source = load_or_train_backbone(
             problem=problem,
+            adapter=adapter,
             device=device,
             seed=seed,
             checkpoint_path=checkpoint_path,
@@ -149,6 +163,7 @@ def main() -> None:
             print_loaded_backbone_validation(backbone_meta)
         comparison = run_comparison_with_model(
             problem=problem,
+            adapter=adapter,
             model=model,
             backbone_meta=backbone_meta,
             device=device,
@@ -165,7 +180,9 @@ def main() -> None:
         print()
 
     payload = build_seed_sweep_payload(seed_runs)
+    payload["requested_device"] = DEVICE
     payload["device"] = str(device)
+    payload["resolved_device"] = str(device)
     payload["checkpoint_path_template"] = CHECKPOINT_PATH_TEMPLATE
     payload["retrain_backbones"] = RETRAIN_BACKBONES
     payload["training_config"] = {
@@ -185,6 +202,9 @@ def main() -> None:
         "batch_size": BATCH_SIZE,
         "resolution": RESOLUTION,
         "fgw_alpha": FGW_ALPHA,
+        "ot_site_policy": OT_SITE_POLICY,
+        "ot_pca_components": OT_PCA_COMPONENTS,
+        "ot_pca_candidate_count": OT_PCA_CANDIDATE_COUNT,
         "ot_top_k_values": OT_TOP_K_VALUES,
         "ot_lambdas": list(OT_LAMBDAS),
         "das_max_epochs": DAS_MAX_EPOCHS,
