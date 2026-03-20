@@ -2,7 +2,9 @@ deprecated/
 __pycache__/
 addition_experiment/__pycache__/
 tests/__pycache__/
+.vscode/
 models/
+paper/
 results/
 .DS_Store
 
