@@ -3,7 +3,10 @@ tests/__pycache__/
 .vscode/
 models/
 paper/
-results/
+# Local experiment outputs; publish curated snapshots under an explicit folder.
+results/**
+!results/clear_relabel_20260325/
+!results/clear_relabel_20260325/**
 .DS_Store
 
 # LaTeX build artifacts

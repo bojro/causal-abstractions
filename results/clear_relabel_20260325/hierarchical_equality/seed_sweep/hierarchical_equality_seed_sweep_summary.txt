@@ -1,0 +1,21 @@
+Hierarchical Equality Seed Sweep Summary
+seeds: 41, 42, 43, 44, 45
+
+Backbone Factual Validation
+mean_exact=0.9991, std_exact=0.0003
+
+Method Average Across Seeds
+DAS: exact=0.8879 +/- 0.0536, gold prob=0.8846 +/- 0.0519, runtime_s=16.19 +/- 0.65
+FGW_CURRENT_RES1_COSINE_A0P5: exact=0.5966 +/- 0.0757, gold prob=0.5965 +/- 0.0755, runtime_s=7.21 +/- 0.32
+GW_CURRENT_RES1_COSINE: exact=0.5642 +/- 0.0311, gold prob=0.5643 +/- 0.0309, runtime_s=7.23 +/- 0.10
+OT_CURRENT_RES1_COSINE: exact=0.7440 +/- 0.0108, gold prob=0.7434 +/- 0.0109, runtime_s=7.55 +/- 0.50
+
+Per-Variable Summary Across Seeds
+DAS [WX]: exact=0.8847 +/- 0.0580, gold prob=0.8814 +/- 0.0560
+DAS [YZ]: exact=0.8912 +/- 0.0503, gold prob=0.8877 +/- 0.0492
+FGW_CURRENT_RES1_COSINE_A0P5 [WX]: exact=0.6183 +/- 0.0773, gold prob=0.6179 +/- 0.0773
+FGW_CURRENT_RES1_COSINE_A0P5 [YZ]: exact=0.5749 +/- 0.1037, gold prob=0.5752 +/- 0.1030
+GW_CURRENT_RES1_COSINE [WX]: exact=0.5961 +/- 0.0342, gold prob=0.5961 +/- 0.0338
+GW_CURRENT_RES1_COSINE [YZ]: exact=0.5323 +/- 0.0365, gold prob=0.5325 +/- 0.0363
+OT_CURRENT_RES1_COSINE [WX]: exact=0.7404 +/- 0.0142, gold prob=0.7399 +/- 0.0141
+OT_CURRENT_RES1_COSINE [YZ]: exact=0.7477 +/- 0.0157, gold prob=0.7468 +/- 0.0152

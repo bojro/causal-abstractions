@@ -1,0 +1,4 @@
+# Exceed GitHub's 100 MB blob limit; keep summaries/plots and per-seed JSON.
+addition/addition_compare_results.json
+addition/seed_sweep/addition_seed_sweep_results.json
+hierarchical_equality/seed_sweep/hierarchical_equality_seed_sweep_results.json
