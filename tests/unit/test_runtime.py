@@ -25,6 +25,9 @@ class RuntimeUnitTests(unittest.TestCase):
         self.assertEqual(metadata["device_resolution"]["requested"], "cuda")
         self.assertEqual(metadata["device_resolution"]["resolved"], "cpu")
         self.assertTrue(metadata["device_resolution"]["used_fallback"])
+        self.assertIn("cuda_available", metadata)
+        self.assertIn("machine", metadata)
+        self.assertFalse(metadata["cuda_available"])
 
 
 if __name__ == "__main__":

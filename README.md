@@ -1,9 +1,22 @@
-# Causal Abstractions for Two-Digit Addition
+# Causal Abstractions OT
 
-This repo uses script-first experiment runs for a two-digit addition benchmark.
-The main workflow trains a shared MLP backbone, builds symbolic counterfactual
-pair banks from an SCM, and compares `gw`, `ot`, `fgw`, and `das` on the same
-held-out counterfactual test split.
+This repository is a script-first framework for running causal abstraction
+experiments with a shared neural backbone/comparison pipeline and
+experiment-specific SCM semantics.
+
+At a high level, each experiment does the same thing:
+
+1. Train a classifier backbone on factual data.
+2. Build symbolic counterfactual pair banks from an SCM.
+3. Compare `gw`, `ot`, `fgw`, and `das` on the same held-out
+   counterfactual test split.
+4. Save JSON results, text summaries, and plots under `results/<timestamp>/`.
+
+The framework currently includes two concrete experiments:
+
+- `addition`: two-digit addition with symbolic carry/sum variables.
+- `hierarchical_equality`: a continuous-input equality task with abstract
+  targets `WX` and `YZ`.
 
 ## Setup
 
@@ -13,79 +26,46 @@ Install the pinned environment:
 python -m pip install -r requirements.txt
 ```
 
-## Main Entry Points
+## Current Experiments
 
-- `python -m experiments.addition.train`
-  - Train the addition backbone.
-- `python -m experiments.addition.compare`
-  - Run one addition comparison.
-- `python -m experiments.addition.seed_sweep`
-  - Run the addition multi-seed sweep.
+### `addition`
 
-## Current Default Experimental Spec
-
-- Input: two 2-digit numbers encoded as concatenated one-hot digit vectors.
+- Inputs: two two-digit numbers encoded as concatenated one-hot digit vectors.
 - Input width: `40`.
 - Default abstract variables: `S1`, `C1`, `S2`, `C2`.
 - Output: `200`-class classification over sums `0..199`.
-- Backbone: four-hidden-layer ReLU MLP with hidden width `192`.
-- Factual supervised data: `30,000` train, `4,000` validation.
-- Counterfactual pair splits: `train=1000`, `calibration=1000`, `test=5000`.
-- Core comparable metrics: `exact_acc`, `mean_shared_digits`.
+- Default backbone: four-layer ReLU MLP with hidden dims `(192, 192, 192, 192)`.
+- Default core metrics: `exact_acc`, `mean_shared_digits`.
 
-## Result Contract
+### `hierarchical_equality`
 
-Each comparison run now emits required comparability metadata:
+- Inputs: four continuous low-dimensional objects `W`, `X`, `Y`, `Z`.
+- Input width: `16` with the current `embedding_dim=4`.
+- Default abstract variables: `WX`, `YZ`.
+- Output: binary classification.
+- Default backbone: four-layer ReLU MLP with hidden dims `(64, 64, 64, 64)`.
+- Default core metrics: `exact_acc`, `mean_true_class_prob`.
 
-- `canonical_variable_mapping`
-- `method_id`
-- `core_metrics`
-- `environment`
-- `seed_trace`
+## Main Entry Points
 
-These contract fields are assembled by the shared framework in `experiment_core/`,
-not by the addition package directly.
+### Addition
 
-For addition, the default canonical mapping is identity:
+- `python -m experiments.addition.train`
+  Train the addition backbone.
+- `python -m experiments.addition.compare`
+  Run one addition comparison.
+- `python -m experiments.addition.seed_sweep`
+  Run the addition multi-seed sweep.
 
-```python
-CANONICAL_VARIABLE_MAPPING = {
-    "S1": "S1",
-    "C1": "C1",
-    "S2": "S2",
-    "C2": "C2",
-}
-```
+### Hierarchical Equality
 
-`method_id` is a flat string. Examples:
+- `python -m experiments.hierarchical_equality.train`
+  Train the hierarchical equality backbone.
+- `python -m experiments.hierarchical_equality.compare`
+  Run one hierarchical equality comparison.
 
-- `gw_current_res1_cosine`
-- `ot_pca_res2_cosine_pc8_keep128`
-- `fgw_current_res1_cosine_a0p5`
-- `das`
-
-## Config Sections
-
-The addition scripts expose these main knobs directly:
-
-- canonical mapping via `CANONICAL_VARIABLE_MAPPING`
-- method naming via `METHODS`
-- optional PCA site selection via `OT_SITE_POLICY`, `OT_PCA_COMPONENTS`, `OT_PCA_CANDIDATE_COUNT`
-- reproducibility via `SEED`, `SEEDS`, `RESULTS_TIMESTAMP`, and recorded environment metadata
-
-## Architecture
-
-The repo is now split into two layers:
-
-- `experiment_core/`
-  - reusable framework code for runners, contracts, runtime metadata, transport methods, DAS, reporting, plots, and sweep aggregation
-- `experiments/addition/`
-  - addition-specific SCM semantics, metrics, pair-bank building, experiment spec, backbone wiring, and experiment entrypoints
-
-This separation is the intended pattern for future experiments:
-
-- put reusable machinery in `experiment_core/`
-- put domain semantics and experiment glue in `experiments/<name>/`
+Not every experiment has to expose every script. Right now `seed_sweep` exists
+for `addition`; single-run `train` and `compare` are the baseline pattern.
 
 ## Typical Workflow
 
@@ -95,54 +75,180 @@ Train a backbone:
 python -m experiments.addition.train
 ```
 
-Run the default baseline comparison:
+Run a comparison:
 
 ```bash
 python -m experiments.addition.compare
 ```
 
-Run a PCA-enabled transport experiment:
-
-```python
-METHODS = ("ot", "fgw")
-OT_SITE_POLICY = "pca"
-OT_PCA_COMPONENTS = 8
-OT_PCA_CANDIDATE_COUNT = 128
-```
-
-Then:
-
-```bash
-python -m experiments.addition.compare
-```
-
-Run a multi-seed sweep:
-
-```bash
-python -m experiments.addition.seed_sweep
-```
-
-To keep output folders stable for publication snapshots, set a fixed timestamp:
+Use a fixed timestamp when you want stable artifact paths:
 
 ```bash
 RESULTS_TIMESTAMP=paper_snapshot python -m experiments.addition.compare
 ```
 
+Example for the second experiment:
+
+```bash
+python -m experiments.hierarchical_equality.train
+python -m experiments.hierarchical_equality.compare
+```
+
+For transport-only experiments, you can narrow `METHODS` in an experiment's
+`compare.py`. For PCA-guided site pre-selection, adjust:
+
+- `OT_SITE_POLICY`
+- `OT_PCA_COMPONENTS`
+- `OT_PCA_CANDIDATE_COUNT`
+
+## Shared Architecture
+
+The repository is split into two layers.
+
+- `experiment_core/`
+  Shared framework code for backbones, comparison runners, contracts,
+  transport methods, DAS, reporting, plotting, runtime metadata, and
+  seed-sweep aggregation.
+- `experiments/<name>/`
+  Experiment-local semantics: SCM, factual data generation, pair-bank
+  building, metrics, selection policy, experiment spec/adapter, and
+  runnable entrypoints.
+
+This separation is the intended pattern for all future experiments:
+
+- Put reusable machinery in `experiment_core/`.
+- Put domain semantics and experiment glue in `experiments/<name>/`.
+
+## How A Comparison Run Works
+
+The shared runner in `experiment_core/compare_runner.py` expects an
+experiment-specific adapter and handles the rest.
+
+An experiment provides:
+
+- an `ExperimentSpec`
+- a factual-data builder
+- a pair-bank builder
+- a metric function
+- checkpoint metadata
+- calibration summary logic
+- incumbent-selection logic
+
+Those hooks are packaged in `ExperimentAdapter` and used by the shared runner,
+shared OT/GW/FGW pipeline, shared DAS pipeline, shared reporting, and shared
+plotting.
+
+## Result Contract
+
+Every comparison run emits comparability metadata assembled by the shared
+framework, not by individual experiments ad hoc.
+
+Important fields include:
+
+- `canonical_variable_mapping`
+- `method_id`
+- `core_metrics`
+- `environment`
+- `seed_trace`
+
+`method_id` is a flat string. Examples:
+
+- `gw_current_res1_cosine`
+- `ot_pca_res2_cosine_pc8_keep128`
+- `fgw_current_res1_cosine_a0p5`
+- `das`
+
+The point of the contract is that two experiments can differ in semantics and
+metrics, while still producing a consistent result shape for downstream
+reporting, plotting, and analysis.
+
 ## Methods Implemented
 
-- `gw`: entropic Gromov-Wasserstein on relational effect geometry.
-- `ot`: entropic optimal transport on direct abstract-to-neural signature costs.
-- `fgw`: fused Gromov-Wasserstein hybrid transport.
-- `das`: rotated-space intervention search with calibration-based model selection.
+- `gw`
+  Entropic Gromov-Wasserstein on relational effect geometry.
+- `ot`
+  Entropic optimal transport on direct abstract-to-neural signature costs.
+- `fgw`
+  Fused Gromov-Wasserstein hybrid transport.
+- `das`
+  Rotated-space intervention search with calibration-based model selection.
 
 GW, OT, and FGW support two site policies:
 
-- `current`: existing canonical site enumeration behavior.
-- `pca`: optional PCA-guided pre-selection before transport ranking.
+- `current`
+  Use the standard site enumeration behavior.
+- `pca`
+  Use PCA-guided pre-selection before transport ranking.
 
 DAS intentionally does not use the PCA site-selection path.
 
-## Tests
+## Adding A New Experiment
+
+The easiest way to add a new experiment is to mirror the layout under
+`experiments/addition/` or `experiments/hierarchical_equality/`.
+
+### Minimum new package shape
+
+Create `experiments/<new_name>/` with most or all of:
+
+- `__init__.py`
+- `constants.py`
+- `scm.py`
+- `metrics.py`
+- `selection.py`
+- `spec.py`
+- `backbone.py`
+- `pair_bank.py`
+- `train.py`
+- `compare.py`
+
+Add a `seed_sweep.py` only if you want multi-seed aggregation for that
+experiment.
+
+### Required shared hooks
+
+Your `spec.py` should build an `ExperimentSpec` and an `ExperimentAdapter`.
+
+`ExperimentSpec` must define:
+
+- `experiment_id`
+- `local_target_vars`
+- `canonical_variable_mapping`
+- `core_metrics`
+
+`ExperimentAdapter` must provide:
+
+- `build_factual_tensors(problem, size, seed)`
+- `build_pair_bank(problem, size, seed, split, verify_with_scm)`
+- `metrics_from_logits(logits, targets)`
+- `build_checkpoint_metadata(train_config)`
+- `summarize_selection_records(records)`
+- `choose_better_selection_candidate(candidate, incumbent)`
+
+### Implementation checklist
+
+1. Define the SCM and factual sampling in `scm.py`.
+2. Decide which abstract variables are local targets.
+3. Build factual tensors for supervised backbone training.
+4. Build counterfactual `PairBank`s for train, calibration, and test.
+5. Define experiment-appropriate comparable metrics.
+6. Wire the adapter/spec in `spec.py`.
+7. Add `train.py` and `compare.py` entrypoints.
+8. Reuse shared comparison/reporting code from `experiment_core/`.
+9. Add unit, contract, and integration tests.
+10. Run a real train/compare job and inspect the generated plots and summary.
+
+### Design guidance
+
+- Keep experiment semantics local; keep framework logic shared.
+- Prefer experiment-defined `core_metrics` instead of hardcoding metric names
+  in shared code.
+- Use canonical variable mappings when different experiments use different
+  local names for conceptually similar targets.
+- Keep train/compare scripts script-first and explicit. This repo favors
+  editable Python config blocks over a large CLI layer.
+
+## Testing
 
 The `unittest` suite is split into:
 
@@ -165,7 +271,7 @@ python -m unittest discover -s tests/unit -p "test_*.py"
 Run one contract module:
 
 ```bash
-python -m unittest tests.contract.test_result_contracts
+python -m unittest tests.contract.test_hierarchical_equality_contracts
 ```
 
 Run one integration class:
@@ -177,33 +283,35 @@ python -m unittest tests.integration.test_addition_pipeline.AdditionPipelineInte
 Run one specific smoke test:
 
 ```bash
-python -m unittest tests.integration.test_addition_pipeline.AdditionPipelineIntegrationTests.test_small_compare_pipeline
+python -m unittest tests.integration.test_hierarchical_equality_pipeline.HierarchicalEqualityPipelineIntegrationTests.test_small_compare_pipeline
 ```
 
-Minimal CI runs unit tests, contract tests, and the tiny integration smoke on CPU.
+Minimal CI should run unit tests, contract tests, and a tiny integration smoke
+on CPU.
 
-## Adding A New Experiment
-
-The intended workflow for a new experiment is:
-
-1. Add `experiments/<new_name>/spec.py` with an `ExperimentSpec` and adapter hooks.
-2. Add experiment-specific SCM/data generation, pair-bank building, and metrics under `experiments/<new_name>/`.
-3. Reuse `experiment_core.compare_runner`, `experiment_core.ot`, `experiment_core.das`, and the shared reporting/runtime code.
-4. Add experiment-local entrypoints under `experiments/<new_name>/` and run them with `python -m`.
-
-## Publication Snapshot Procedure
+## Publication / Snapshot Workflow
 
 1. Install the pinned environment from `requirements.txt`.
-2. Set the final script config in `experiments/addition/train.py`, `experiments/addition/compare.py`, or `experiments/addition/seed_sweep.py`.
-3. Use a fixed `RESULTS_TIMESTAMP` so artifact paths are stable.
-4. Run the desired baseline and optional PCA-enabled comparisons.
-5. Keep the generated JSON artifacts, text summaries, and plots together under the matching `results/<timestamp>/` directory.
+2. Set the desired config in the relevant experiment scripts.
+3. Set `RESULTS_TIMESTAMP` when you want stable output paths.
+4. Run the needed train/compare or sweep scripts.
+5. Keep the JSON artifacts, text summaries, and plots together under the
+   matching `results/<timestamp>/` directory.
 
 ## Repository Layout
 
-- `experiment_core/`: reusable experiment framework code.
-- `experiments/addition/`: the concrete addition experiment implementation.
-- `tests/`: split `unit`, `contract`, and `integration` suites.
-- `models/`: saved backbones such as `addition_mlp_seed44.pt`.
-- `results/`: timestamped experiment outputs.
-- `paper/`: draft paper materials, including `paper/addition_methodology.tex`.
+- `experiment_core/`
+  Reusable experiment framework code.
+- `experiments/addition/`
+  Concrete addition experiment implementation.
+- `experiments/hierarchical_equality/`
+  Concrete hierarchical equality implementation.
+- `tests/`
+  `unit`, `contract`, and `integration` suites.
+- `models/`
+  Saved backbones such as `addition_mlp_seed44.pt` and
+  `hierarchical_equality_mlp_seed44.pt`.
+- `results/`
+  Timestamped experiment outputs.
+- `paper/`
+  Draft paper materials, currently addition-focused.

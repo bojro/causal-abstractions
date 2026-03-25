@@ -86,11 +86,35 @@ def collect_environment_metadata(
 ) -> dict[str, object]:
     """Collect lightweight environment metadata for reproducible experiment outputs."""
     resolved_device = torch.device(device)
+    cuda_available = torch.cuda.is_available()
+    cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
+    cuda_device_index: int | None = None
+    cuda_device_name: str | None = None
+    if cuda_available:
+        try:
+            if resolved_device.type == "cuda":
+                cuda_device_index = int(resolved_device.index) if resolved_device.index is not None else 0
+            else:
+                cuda_device_index = 0
+            cuda_device_name = str(torch.cuda.get_device_name(cuda_device_index))
+        except Exception:
+            cuda_device_index = 0
+            try:
+                cuda_device_name = str(torch.cuda.get_device_name(0))
+            except Exception:
+                cuda_device_name = None
+
     return {
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor() or None,
         "device": str(resolved_device),
         "requested_device": None if requested_device is None else str(requested_device),
+        "cuda_available": cuda_available,
+        "cuda_device_count": cuda_device_count,
+        "cuda_device_index": cuda_device_index,
+        "cuda_device_name": cuda_device_name,
         "device_resolution": {
             "requested": None if requested_device is None else str(requested_device),
             "resolved": str(resolved_device),

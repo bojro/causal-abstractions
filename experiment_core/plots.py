@@ -27,6 +27,7 @@ def _metric_display_name(metric_name: str) -> str:
     label_map = {
         "exact_acc": "Exact Accuracy",
         "mean_shared_digits": "Mean Shared Digits",
+        "mean_true_class_prob": "Mean Gold-Class Probability",
     }
     return label_map.get(str(metric_name), str(metric_name).replace("_", " ").title())
 
@@ -36,6 +37,7 @@ def _metric_plot_key(metric_name: str) -> str:
     key_map = {
         "exact_acc": "exact_accuracy",
         "mean_shared_digits": "shared_digits",
+        "mean_true_class_prob": "mean_gold_class_probability",
     }
     return key_map.get(str(metric_name), str(metric_name))
 
@@ -45,6 +47,7 @@ def _metric_plot_filename(metric_name: str) -> str:
     filename_map = {
         "exact_acc": "exact_accuracy.png",
         "mean_shared_digits": "shared_digits.png",
+        "mean_true_class_prob": "mean_gold_class_probability.png",
     }
     return filename_map.get(str(metric_name), f"{str(metric_name)}.png")
 
@@ -71,6 +74,94 @@ def _group_records(records: list[dict[str, object]], key: str) -> dict[str, dict
         grouped.setdefault(method, {})
         grouped[method][variable] = float(record[key])
     return grouped
+
+
+def _runtime_hardware_caption_lines(env: dict[str, object] | None) -> list[str]:
+    """Build short hardware lines for annotating runtime plots."""
+    if not env:
+        return ["Hardware: (environment metadata missing)"]
+    lines: list[str] = []
+    cuda_ok = bool(env.get("cuda_available"))
+    lines.append(f"CUDA available: {'yes' if cuda_ok else 'no'}")
+    lines.append(f"Resolved device: {env.get('device', '?')}")
+    req = env.get("requested_device")
+    if req is not None:
+        lines.append(f"Requested device: {req}")
+    res = env.get("device_resolution")
+    if isinstance(res, dict) and res.get("used_fallback"):
+        lines.append("Note: requested device differed from resolved (fallback).")
+    if cuda_ok:
+        name = env.get("cuda_device_name")
+        count = env.get("cuda_device_count")
+        idx = env.get("cuda_device_index")
+        if name:
+            lines.append(f"GPU: {name}")
+        if idx is not None and count is not None:
+            lines.append(f"CUDA device index: {idx} (count={count})")
+    machine = env.get("machine")
+    proc = env.get("processor")
+    plat = env.get("platform")
+    if machine:
+        lines.append(f"Machine: {machine}")
+    if proc:
+        lines.append(f"Processor: {proc}")
+    if plat:
+        plat_str = str(plat)
+        if len(plat_str) > 96:
+            plat_str = plat_str[:93] + "..."
+        lines.append(f"Platform: {plat_str}")
+    py_v = env.get("python_version")
+    pkgs = env.get("packages")
+    torch_v = None
+    if isinstance(pkgs, dict):
+        torch_v = pkgs.get("torch")
+    if py_v:
+        lines.append(f"Python: {py_v}")
+    if torch_v:
+        lines.append(f"PyTorch: {torch_v}")
+    return lines
+
+
+def _save_method_runtime_plot(
+    *,
+    plot_dir: Path,
+    method_order: list[str],
+    runtime_by_method: dict[str, float],
+    environment: dict[str, object] | None,
+) -> Path:
+    """Bar chart of wall-clock seconds per method with hardware caption."""
+    path = plot_dir / "method_runtime.png"
+    order = [m for m in method_order if m in runtime_by_method]
+    for m in runtime_by_method:
+        if m not in order:
+            order.append(m)
+    values = [float(runtime_by_method[m]) for m in order]
+    labels = [str(m).upper() for m in order]
+
+    caption_lines = _runtime_hardware_caption_lines(environment)
+    caption = "\n".join(caption_lines)
+    bottom_frac = min(0.28 + 0.018 * len(caption_lines), 0.52)
+
+    fig, ax = plt.subplots(figsize=(10, 6.8), constrained_layout=False)
+    fig.subplots_adjust(bottom=bottom_frac, top=0.92)
+    ax.bar(np.arange(len(order)), values, color="steelblue", width=0.65)
+    ax.set_xticks(np.arange(len(order)), labels)
+    ax.set_ylabel("Wall-clock seconds")
+    ax.set_title("Method runtime (full pipeline: fit / search + calibration + holdout eval)")
+    ymax = max(values) if values else 1.0
+    ax.set_ylim(0.0, ymax * 1.15 if ymax > 0 else 1.0)
+    fig.text(
+        0.02,
+        0.02,
+        caption,
+        transform=fig.transFigure,
+        fontsize=8,
+        verticalalignment="bottom",
+        fontfamily="monospace",
+    )
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
 
 
 def save_comparison_plots(
@@ -180,5 +271,26 @@ def save_comparison_plots(
         fig.savefig(transport_path, dpi=200)
         plt.close(fig)
         plot_paths["transport_plans"] = str(transport_path)
+
+    runtime_map: dict[str, float] = {
+        str(k): float(v) for k, v in dict(payload.get("method_runtime_seconds") or {}).items()
+    }
+    if not runtime_map and summary:
+        runtime_map = {
+            str(record["method"]): float(record.get("runtime_seconds", 0.0))
+            for record in summary
+            if float(record.get("runtime_seconds", 0.0)) > 0.0
+        }
+    if runtime_map:
+        method_order = [str(m) for m in (payload.get("methods") or [])]
+        env = payload.get("environment")
+        env_dict = dict(env) if isinstance(env, dict) else None
+        runtime_path = _save_method_runtime_plot(
+            plot_dir=plot_dir,
+            method_order=method_order,
+            runtime_by_method=runtime_map,
+            environment=env_dict,
+        )
+        plot_paths["method_runtime"] = str(runtime_path)
 
     return plot_paths

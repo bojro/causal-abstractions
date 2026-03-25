@@ -6,6 +6,11 @@ from pathlib import Path
 from experiment_core.compare_runner import CompareExperimentConfig
 from experiments.addition.backbone import AdditionTrainConfig, train_backbone
 from experiments.addition.scm import load_addition_problem
+from experiments.hierarchical_equality.backbone import (
+    HierarchicalEqualityTrainConfig,
+    train_backbone as train_hierarchical_equality_backbone,
+)
+from experiments.hierarchical_equality.scm import load_hierarchical_equality_problem
 
 
 def small_train_config(seed: int = 42) -> AdditionTrainConfig:
@@ -25,6 +30,29 @@ def load_small_model(checkpoint_path: str, seed: int = 42):
     model, _, meta = train_backbone(
         problem=problem,
         train_config=small_train_config(seed=seed),
+        checkpoint_path=checkpoint_path,
+        device="cpu",
+    )
+    return problem, model, meta
+
+
+def small_hierarchical_equality_train_config(seed: int = 42) -> HierarchicalEqualityTrainConfig:
+    return HierarchicalEqualityTrainConfig(
+        seed=seed,
+        n_train=64,
+        n_validation=32,
+        hidden_dims=(16, 16),
+        train_epochs=1,
+        train_batch_size=16,
+        eval_batch_size=16,
+    )
+
+
+def load_small_hierarchical_equality_model(checkpoint_path: str, seed: int = 42):
+    problem = load_hierarchical_equality_problem(run_checks=False)
+    model, _, meta = train_hierarchical_equality_backbone(
+        problem=problem,
+        train_config=small_hierarchical_equality_train_config(seed=seed),
         checkpoint_path=checkpoint_path,
         device="cpu",
     )

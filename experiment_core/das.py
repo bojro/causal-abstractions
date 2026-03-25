@@ -162,6 +162,14 @@ def _format_selection_metrics(selection_metrics: dict[str, object]) -> str:
     )
 
 
+def _metric_subset(record: dict[str, object], metric_names: tuple[str, ...] | list[str]) -> dict[str, float]:
+    """Extract only the named metrics from a search or result record."""
+    return {
+        str(metric_name): float(record.get(str(metric_name), 0.0))
+        for metric_name in metric_names
+    }
+
+
 def run_das_search_for_variable(
     model: VariableWidthMLPForClassification,
     variable: str,
@@ -277,13 +285,16 @@ def run_das_search_for_variable(
     )
     result_record = {**best_record, "split": holdout_bank.split, "seed": holdout_bank.seed, **holdout_metrics}
     if config.verbose:
+        metric_names = tuple(str(name) for name in best_record.get("selection_metrics", {}).keys())
+        calibration_metrics = {
+            metric_name: float(result_record.get(f"calibration_{metric_name}", 0.0))
+            for metric_name in metric_names
+        }
         print(
             f"DAS [{variable}] selected {result_record['site_label']} "
             f"| epochs={int(result_record['train_epochs_ran'])} "
-            f"| calibration_exact={result_record['calibration_exact_acc']:.4f} "
-            f"| calibration_shared={result_record['calibration_mean_shared_digits']:.4f} "
-            f"| holdout_exact={result_record['exact_acc']:.4f} "
-            f"| holdout_shared={result_record['mean_shared_digits']:.4f}"
+            f"| calibration={_format_selection_metrics(calibration_metrics)} "
+            f"| holdout={_format_selection_metrics(_metric_subset(result_record, metric_names))}"
         )
     return result_record, all_records
 

@@ -3,7 +3,6 @@ tests/__pycache__/
 .vscode/
 models/
 paper/
-results/
 .DS_Store
 
 # LaTeX build artifacts

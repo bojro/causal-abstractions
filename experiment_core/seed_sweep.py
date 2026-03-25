@@ -28,6 +28,7 @@ def _metric_display_name(metric_name: str) -> str:
     label_map = {
         "exact_acc": "Exact Accuracy",
         "mean_shared_digits": "Mean Shared Digits",
+        "mean_true_class_prob": "Mean Gold-Class Probability",
     }
     return label_map.get(str(metric_name), str(metric_name).replace("_", " ").title())
 
@@ -37,6 +38,7 @@ def _metric_short_label(metric_name: str) -> str:
     label_map = {
         "exact_acc": "exact",
         "mean_shared_digits": "shared",
+        "mean_true_class_prob": "gold prob",
     }
     return label_map.get(str(metric_name), str(metric_name).replace("_", " "))
 

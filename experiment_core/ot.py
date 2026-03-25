@@ -37,6 +37,17 @@ def _format_hparam_value(value: float, decimals: int = 6) -> str:
     return text
 
 
+def _record_metric_summary(
+    record: dict[str, object],
+    metric_names: tuple[str, ...] | list[str],
+) -> dict[str, float]:
+    """Extract a compact metric summary from one result record."""
+    return {
+        str(metric_name): float(record.get(str(metric_name), 0.0))
+        for metric_name in metric_names
+    }
+
+
 @dataclass(frozen=True)
 class OTConfig:
     """Hyperparameters for OT, GW, and FGW alignment and intervention runs."""
@@ -605,8 +616,6 @@ def select_transport_hyperparameters(
         "results": selected_results,
         "search_records": search_records,
         "average_selection_metrics": average_metrics,
-        "average_calibration_exact_acc": float(average_metrics.get("exact_acc", 0.0)),
-        "average_calibration_mean_shared_digits": float(average_metrics.get("mean_shared_digits", 0.0)),
     }
 
 
@@ -725,12 +734,12 @@ def run_alignment_pipeline(
         for metric_name in selection_metrics.keys():
             record[f"calibration_{metric_name}"] = float(calibration_record.get(metric_name, 0.0))
         if config.selection_verbose:
+            holdout_metrics = _record_metric_summary(record, tuple(selection_metrics.keys()))
             print(
                 f"{str(config.method).upper()} [{record['variable']}] selected {record['site_label']} "
                 f"| selection={_format_selection_metrics(selection_metrics)} "
                 f"| calibration={_format_selection_metrics({metric_name: record[f'calibration_{metric_name}'] for metric_name in selection_metrics})} "
-                f"| holdout_exact={float(record['exact_acc']):.4f} "
-                f"| holdout_shared={float(record['mean_shared_digits']):.4f}"
+                f"| holdout={_format_selection_metrics(holdout_metrics)}"
             )
         results.append(record)
     return {
@@ -753,8 +762,6 @@ def run_alignment_pipeline(
             "top_k_by_variable": selected_top_k_by_variable,
             "lambda_by_variable": selected_lambda_by_variable,
             "average_selection_metrics": dict(selection_payload["average_selection_metrics"]),
-            "average_calibration_exact_acc": float(selection_payload["average_calibration_exact_acc"]),
-            "average_calibration_mean_shared_digits": float(selection_payload["average_calibration_mean_shared_digits"]),
         },
         "calibration_sweep": selection_payload["search_records"],
         "layer_masks_by_variable": {
