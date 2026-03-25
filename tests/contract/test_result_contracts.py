@@ -52,6 +52,8 @@ class ResultContractTests(unittest.TestCase):
             self.assertFalse(payload["environment"]["cuda_available"])
             self.assertIn("method_runtime", payload["plots"])
             self.assertTrue(Path(payload["plots"]["method_runtime"]).resolve().is_file())
+            self.assertEqual(Path(payload["plots"]["method_runtime"]).name, "compare_method_runtime.png")
+            self.assertEqual(Path(payload["plots"]["average_summary"]).name, "compare_average_summary.png")
 
             for record in payload["results"]:
                 self.assertIn("method_id", record)

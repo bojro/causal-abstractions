@@ -24,7 +24,7 @@ from .spec import build_hierarchical_equality_adapter
 SEED = DEFAULT_TRAIN_SEED
 DEVICE = None
 RUN_TIMESTAMP = os.environ.get("RESULTS_TIMESTAMP") or datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_DIR = Path("results") / RUN_TIMESTAMP
+RUN_DIR = Path("results") / RUN_TIMESTAMP / "hierarchical_equality"
 CHECKPOINT_PATH = DEFAULT_CHECKPOINT_PATH
 OUTPUT_PATH = RUN_DIR / "hierarchical_equality_compare_results.json"
 SUMMARY_PATH = RUN_DIR / "hierarchical_equality_compare_summary.txt"

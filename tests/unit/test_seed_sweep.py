@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from experiment_core.seed_sweep import build_seed_sweep_payload, format_seed_sweep_summary
+from experiment_core.seed_sweep import (
+    build_seed_sweep_payload,
+    format_seed_sweep_summary,
+    save_seed_sweep_plots,
+)
 
 
 class SeedSweepUnitTests(unittest.TestCase):
@@ -143,6 +149,44 @@ class SeedSweepUnitTests(unittest.TestCase):
         summary_text = format_seed_sweep_summary(payload)
         self.assertIn("DEMO: score=0.4000 +/- 0.2000, agreement=0.6000 +/- 0.1000", summary_text)
         self.assertIn("DEMO [alpha]: score=0.4000 +/- 0.2000, agreement=0.6000 +/- 0.1000", summary_text)
+
+    def test_seed_sweep_plot_paths_are_prefixed_and_files_exist(self) -> None:
+        payload = {
+            "experiment_id": "demo_experiment",
+            "seeds": [1, 2],
+            "methods": ["demo"],
+            "target_vars": ["alpha"],
+            "resolved_device": "cpu",
+            "core_metrics": ["exact_acc"],
+            "method_summary_across_seeds": [
+                {
+                    "method": "demo",
+                    "exact_acc_mean": 0.5,
+                    "exact_acc_std": 0.1,
+                    "runtime_seconds_mean": 2.0,
+                    "runtime_seconds_std": 0.5,
+                }
+            ],
+            "variable_summary_across_seeds": [
+                {
+                    "method": "demo",
+                    "variable": "alpha",
+                    "exact_acc_mean": 0.5,
+                    "exact_acc_std": 0.1,
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "demo_seed_sweep_results.json"
+            plot_paths = save_seed_sweep_plots(payload, output_path)
+
+            self.assertEqual(Path(plot_paths["average_exact_summary"]).name, "demo_seed_sweep_average_exact_summary.png")
+            self.assertEqual(Path(plot_paths["variable_exact_summary"]).name, "demo_seed_sweep_variable_exact_summary.png")
+            self.assertEqual(Path(plot_paths["runtime_summary"]).name, "demo_seed_sweep_runtime_summary.png")
+            self.assertTrue(Path(plot_paths["average_exact_summary"]).is_file())
+            self.assertTrue(Path(plot_paths["variable_exact_summary"]).is_file())
+            self.assertTrue(Path(plot_paths["runtime_summary"]).is_file())
 
 
 if __name__ == "__main__":

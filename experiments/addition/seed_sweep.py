@@ -22,7 +22,7 @@ from .spec import build_addition_adapter
 SEEDS = (41, 42, 43, 44, 45)
 DEVICE = "cuda"
 RUN_TIMESTAMP = os.environ.get("RESULTS_TIMESTAMP") or datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_DIR = Path("results") / f"{RUN_TIMESTAMP}"
+RUN_DIR = Path("results") / RUN_TIMESTAMP / "addition" / "seed_sweep"
 CHECKPOINT_PATH_TEMPLATE = "models/addition_mlp_seed{seed}.pt"
 OUTPUT_PATH = RUN_DIR / "addition_seed_sweep_results.json"
 SUMMARY_PATH = RUN_DIR / "addition_seed_sweep_summary.txt"
@@ -180,6 +180,7 @@ def main() -> None:
         print()
 
     payload = build_seed_sweep_payload(seed_runs)
+    payload["experiment_id"] = "addition"
     payload["requested_device"] = DEVICE
     payload["device"] = str(device)
     payload["resolved_device"] = str(device)

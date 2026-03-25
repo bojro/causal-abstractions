@@ -40,6 +40,11 @@ class HierarchicalEqualityContractTests(unittest.TestCase):
             self.assertEqual(payload["target_vars"], ["WX", "YZ"])
             self.assertIn("method_runtime", payload["plots"])
             self.assertTrue(Path(payload["plots"]["method_runtime"]).resolve().is_file())
+            self.assertEqual(Path(payload["plots"]["method_runtime"]).name, "compare_method_runtime.png")
+            self.assertEqual(
+                Path(payload["plots"]["mean_gold_class_probability"]).name,
+                "compare_mean_gold_class_probability.png",
+            )
 
             for record in payload["results"]:
                 self.assertIn("method_id", record)

@@ -1,2 +1,0 @@
-# GitHub rejects blobs over 100 MB. Full addition compare payloads exceed that limit.
-**/addition_compare_results.json

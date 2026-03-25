@@ -15,7 +15,7 @@ from .spec import build_addition_adapter
 SEED = 44
 DEVICE = "cuda"
 RUN_TIMESTAMP = os.environ.get("RESULTS_TIMESTAMP") or datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_DIR = Path("results") / RUN_TIMESTAMP
+RUN_DIR = Path("results") / RUN_TIMESTAMP / "addition"
 CHECKPOINT_PATH = Path(f"models/addition_mlp_seed{SEED}.pt")
 OUTPUT_PATH = RUN_DIR / "addition_compare_results.json"
 SUMMARY_PATH = RUN_DIR / "addition_compare_summary.txt"

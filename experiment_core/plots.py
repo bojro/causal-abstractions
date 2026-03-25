@@ -76,6 +76,40 @@ def _group_records(records: list[dict[str, object]], key: str) -> dict[str, dict
     return grouped
 
 
+def _artifact_prefix(output_path: Path) -> str:
+    """Derive a stable artifact prefix from an output filename."""
+    stem = str(output_path.stem)
+    for suffix in ("_results", "_summary"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def _experiment_label(payload: dict[str, object]) -> str:
+    """Build a readable experiment label for titles."""
+    experiment_id = str(payload.get("experiment_id", "experiment"))
+    return experiment_id.replace("_", " ").title()
+
+
+def _compare_context_line(payload: dict[str, object]) -> str:
+    """Build a compact single-run context line for figure titles."""
+    seed = payload.get("seed")
+    target_vars = [str(variable) for variable in payload.get("target_vars", [])]
+    resolved_device = payload.get("resolved_device")
+    if resolved_device is None:
+        environment = payload.get("environment")
+        if isinstance(environment, dict):
+            resolved_device = environment.get("device")
+    bits = []
+    if seed is not None:
+        bits.append(f"seed={seed}")
+    if resolved_device is not None:
+        bits.append(f"device={resolved_device}")
+    if target_vars:
+        bits.append(f"targets={', '.join(target_vars)}")
+    return " | ".join(bits)
+
+
 def _runtime_hardware_caption_lines(env: dict[str, object] | None) -> list[str]:
     """Build short hardware lines for annotating runtime plots."""
     if not env:
@@ -124,13 +158,13 @@ def _runtime_hardware_caption_lines(env: dict[str, object] | None) -> list[str]:
 
 def _save_method_runtime_plot(
     *,
-    plot_dir: Path,
+    path: Path,
+    title: str,
     method_order: list[str],
     runtime_by_method: dict[str, float],
     environment: dict[str, object] | None,
 ) -> Path:
     """Bar chart of wall-clock seconds per method with hardware caption."""
-    path = plot_dir / "method_runtime.png"
     order = [m for m in method_order if m in runtime_by_method]
     for m in runtime_by_method:
         if m not in order:
@@ -147,7 +181,7 @@ def _save_method_runtime_plot(
     ax.bar(np.arange(len(order)), values, color="steelblue", width=0.65)
     ax.set_xticks(np.arange(len(order)), labels)
     ax.set_ylabel("Wall-clock seconds")
-    ax.set_title("Method runtime (full pipeline: fit / search + calibration + holdout eval)")
+    ax.set_title(title)
     ymax = max(values) if values else 1.0
     ax.set_ylim(0.0, ymax * 1.15 if ymax > 0 else 1.0)
     fig.text(
@@ -172,12 +206,15 @@ def save_comparison_plots(
     """Render the standard comparison plots and return their output paths."""
     output_path = Path(output_path)
     plot_dir = output_path.parent
+    artifact_prefix = _artifact_prefix(output_path)
     ensure_parent_dir(output_path)
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     records = list(payload.get("results", []))
     summary = list(payload.get("method_summary", []))
     core_metrics = _resolve_core_metrics(payload.get("core_metrics"))
+    experiment_label = _experiment_label(payload)
+    context_line = _compare_context_line(payload)
 
     grouped_metrics = {
         metric_name: _group_records(records, metric_name) for metric_name in core_metrics
@@ -191,7 +228,7 @@ def save_comparison_plots(
     plot_paths = {"plot_dir": str(plot_dir)}
     for metric_name in core_metrics:
         metric_records = grouped_metrics.get(metric_name, {})
-        metric_path = plot_dir / _metric_plot_filename(metric_name)
+        metric_path = plot_dir / f"{artifact_prefix}_{_metric_plot_filename(metric_name)}"
         fig, ax = plt.subplots(figsize=(10, 4.5), constrained_layout=True)
         all_values = []
         for idx, method in enumerate(methods):
@@ -204,13 +241,16 @@ def save_comparison_plots(
             ax.set_ylim(*y_limits)
         metric_label = _metric_display_name(metric_name)
         ax.set_ylabel(metric_label)
-        ax.set_title(f"Per-variable {metric_label.lower()}")
+        title = f"{experiment_label} | Per-variable {metric_label.lower()}"
+        if context_line:
+            title = f"{title}\n{context_line}"
+        ax.set_title(title)
         ax.legend(loc="best")
         fig.savefig(metric_path, dpi=200)
         plt.close(fig)
         plot_paths[_metric_plot_key(metric_name)] = str(metric_path)
 
-    summary_path = plot_dir / "average_summary.png"
+    summary_path = plot_dir / f"{artifact_prefix}_average_summary.png"
     fig, ax = plt.subplots(figsize=(8, 4.5), constrained_layout=True)
     summary_methods = [str(record["method"]).upper() for record in summary]
     summary_x = np.arange(len(summary_methods))
@@ -227,7 +267,10 @@ def save_comparison_plots(
             label=_metric_display_name(metric_name),
         )
     ax.set_xticks(summary_x, summary_methods)
-    ax.set_title("Average summary across abstract variables")
+    title = f"{experiment_label} | Average summary across abstract variables"
+    if context_line:
+        title = f"{title}\n{context_line}"
+    ax.set_title(title)
     ax.legend(loc="best")
     fig.savefig(summary_path, dpi=200)
     plt.close(fig)
@@ -245,7 +288,7 @@ def save_comparison_plots(
             float(np.asarray(method_payload["transport"], dtype=float).max())
             for _, method_payload in transport_methods
         )
-        transport_path = plot_dir / "transport_plans.png"
+        transport_path = plot_dir / f"{artifact_prefix}_transport_plans.png"
         fig, axes = plt.subplots(
             nrows=len(transport_methods),
             ncols=1,
@@ -253,6 +296,10 @@ def save_comparison_plots(
             constrained_layout=True,
             squeeze=False,
         )
+        title = f"{experiment_label} | Transport plans"
+        if context_line:
+            title = f"{title}\n{context_line}"
+        fig.suptitle(title)
         for axis, (method, method_payload) in zip(axes.flat, transport_methods):
             transport = np.asarray(method_payload["transport"], dtype=float)
             image = axis.imshow(
@@ -285,8 +332,16 @@ def save_comparison_plots(
         method_order = [str(m) for m in (payload.get("methods") or [])]
         env = payload.get("environment")
         env_dict = dict(env) if isinstance(env, dict) else None
+        title = (
+            f"{experiment_label} | Method runtime\n"
+            "Single compare run, full pipeline wall-clock "
+            "(fit / search + calibration + holdout eval)"
+        )
+        if context_line:
+            title = f"{title}\n{context_line}"
         runtime_path = _save_method_runtime_plot(
-            plot_dir=plot_dir,
+            path=plot_dir / f"{artifact_prefix}_method_runtime.png",
+            title=title,
             method_order=method_order,
             runtime_by_method=runtime_map,
             environment=env_dict,

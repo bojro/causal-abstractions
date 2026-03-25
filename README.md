@@ -10,7 +10,8 @@ At a high level, each experiment does the same thing:
 2. Build symbolic counterfactual pair banks from an SCM.
 3. Compare `gw`, `ot`, `fgw`, and `das` on the same held-out
    counterfactual test split.
-4. Save JSON results, text summaries, and plots under `results/<timestamp>/`.
+4. Save JSON results, text summaries, and plots under experiment-specific
+   subdirectories such as `results/<timestamp>/<experiment>/...`.
 
 The framework currently includes two concrete experiments:
 
@@ -63,9 +64,8 @@ python -m pip install -r requirements.txt
   Train the hierarchical equality backbone.
 - `python -m experiments.hierarchical_equality.compare`
   Run one hierarchical equality comparison.
-
-Not every experiment has to expose every script. Right now `seed_sweep` exists
-for `addition`; single-run `train` and `compare` are the baseline pattern.
+- `python -m experiments.hierarchical_equality.seed_sweep`
+  Run the hierarchical equality multi-seed sweep.
 
 ## Typical Workflow
 
@@ -87,11 +87,17 @@ Use a fixed timestamp when you want stable artifact paths:
 RESULTS_TIMESTAMP=paper_snapshot python -m experiments.addition.compare
 ```
 
+With the current layout that produces experiment-specific folders, for example:
+
+- `results/paper_snapshot/addition/...`
+- `results/paper_snapshot/hierarchical_equality/...`
+
 Example for the second experiment:
 
 ```bash
 python -m experiments.hierarchical_equality.train
 python -m experiments.hierarchical_equality.compare
+python -m experiments.hierarchical_equality.seed_sweep
 ```
 
 For transport-only experiments, you can narrow `METHODS` in an experiment's
@@ -137,6 +143,24 @@ An experiment provides:
 Those hooks are packaged in `ExperimentAdapter` and used by the shared runner,
 shared OT/GW/FGW pipeline, shared DAS pipeline, shared reporting, and shared
 plotting.
+
+## Output Layout
+
+Single compare runs now write into experiment-specific directories and use
+self-identifying plot names. For example:
+
+- `results/<timestamp>/addition/addition_compare_results.json`
+- `results/<timestamp>/addition/addition_compare_exact_accuracy.png`
+- `results/<timestamp>/hierarchical_equality/hierarchical_equality_compare_method_runtime.png`
+
+Seed sweeps write into a nested sweep directory, with per-seed outputs below it:
+
+- `results/<timestamp>/addition/seed_sweep/addition_seed_sweep_results.json`
+- `results/<timestamp>/addition/seed_sweep/seed_44/addition_compare_results.json`
+- `results/<timestamp>/hierarchical_equality/seed_sweep/hierarchical_equality_seed_sweep_runtime_summary.png`
+
+This avoids plot overwrites when multiple experiments share the same
+`RESULTS_TIMESTAMP`.
 
 ## Result Contract
 
@@ -203,7 +227,8 @@ Create `experiments/<new_name>/` with most or all of:
 - `compare.py`
 
 Add a `seed_sweep.py` only if you want multi-seed aggregation for that
-experiment.
+experiment. The repository currently has seed sweeps for both `addition` and
+`hierarchical_equality`.
 
 ### Required shared hooks
 
@@ -296,7 +321,7 @@ on CPU.
 3. Set `RESULTS_TIMESTAMP` when you want stable output paths.
 4. Run the needed train/compare or sweep scripts.
 5. Keep the JSON artifacts, text summaries, and plots together under the
-   matching `results/<timestamp>/` directory.
+   matching `results/<timestamp>/<experiment>/` directory.
 
 ## Repository Layout
 

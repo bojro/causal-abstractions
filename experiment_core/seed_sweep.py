@@ -43,6 +43,36 @@ def _metric_short_label(metric_name: str) -> str:
     return label_map.get(str(metric_name), str(metric_name).replace("_", " "))
 
 
+def _artifact_prefix(output_path: Path) -> str:
+    """Derive a stable artifact prefix from a seed-sweep output filename."""
+    stem = str(output_path.stem)
+    for suffix in ("_results", "_summary"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return stem
+
+
+def _experiment_label(payload: dict[str, object]) -> str:
+    """Build a readable experiment label for titles."""
+    experiment_id = str(payload.get("experiment_id", "experiment"))
+    return experiment_id.replace("_", " ").title()
+
+
+def _seed_sweep_context_line(payload: dict[str, object]) -> str:
+    """Build a compact sweep context line for aggregate plots."""
+    seeds = [str(seed) for seed in payload.get("seeds", [])]
+    target_vars = [str(variable) for variable in payload.get("target_vars", [])]
+    bits = []
+    if seeds:
+        bits.append(f"seeds={', '.join(seeds)}")
+    if target_vars:
+        bits.append(f"targets={', '.join(target_vars)}")
+    resolved_device = payload.get("resolved_device") or payload.get("device")
+    if resolved_device is not None:
+        bits.append(f"device={resolved_device}")
+    return " | ".join(bits)
+
+
 def _metric_summary_fields(values: list[float], metric_name: str) -> dict[str, float]:
     """Build the standard mean/std field pair for one metric."""
     metric_mean, metric_std = _mean_std(values)
@@ -71,11 +101,14 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
     target_vars = []
     seeds = []
     core_metrics: tuple[str, ...] = ("exact_acc", "mean_shared_digits")
+    experiment_id: str | None = None
 
     for seed_run in seed_runs:
         seed = int(seed_run["seed"])
         seeds.append(seed)
         comparison = dict(seed_run["comparison"])
+        if experiment_id is None and comparison.get("experiment_id") is not None:
+            experiment_id = str(comparison["experiment_id"])
         core_metrics = _resolve_core_metrics(comparison.get("core_metrics", core_metrics))
         target_vars = [str(variable) for variable in comparison.get("target_vars", target_vars)]
         method_runtime_seconds = {
@@ -171,6 +204,7 @@ def build_seed_sweep_payload(seed_runs: list[dict[str, object]]) -> dict[str, ob
 
     backbone_exact_mean, backbone_exact_std = _mean_std([record["exact_acc"] for record in backbone_factual])
     return {
+        "experiment_id": experiment_id,
         "seeds": seeds,
         "methods": methods,
         "target_vars": target_vars,
@@ -260,10 +294,13 @@ def save_seed_sweep_plots(payload: dict[str, object], output_path: str | Path) -
     """Write aggregate multi-seed plots next to the provided output path."""
     output_path = Path(output_path)
     plot_dir = output_path.parent
+    artifact_prefix = _artifact_prefix(output_path)
     ensure_parent_dir(output_path)
     plot_dir.mkdir(parents=True, exist_ok=True)
     plot_paths = {"plot_dir": str(plot_dir)}
     core_metrics = _resolve_core_metrics(payload.get("core_metrics"))
+    experiment_label = _experiment_label(payload)
+    context_line = _seed_sweep_context_line(payload)
     for metric_name in core_metrics:
         metric_slug = str(metric_name)
         average_plot_key = "average_exact_summary" if metric_slug == "exact_acc" else (
@@ -280,31 +317,40 @@ def save_seed_sweep_plots(payload: dict[str, object], output_path: str | Path) -
         )
         plot_paths[average_plot_key] = _plot_mean_std_bars(
             records=list(payload.get("method_summary_across_seeds", [])),
-            output_path=plot_dir / average_filename,
+            output_path=plot_dir / f"{artifact_prefix}_{average_filename}",
             mean_key=f"{metric_slug}_mean",
             std_key=f"{metric_slug}_std",
             ylabel=f"Average {_metric_display_name(metric_slug)}",
-            title=f"Average {_metric_display_name(metric_slug).lower()} mean +/- std across seeds",
+            title=(
+                f"{experiment_label} | Average {_metric_display_name(metric_slug).lower()} mean +/- std across seeds"
+                + (f"\n{context_line}" if context_line else "")
+            ),
         )
         plot_paths[variable_plot_key] = _plot_grouped_mean_std_bars(
             records=list(payload.get("variable_summary_across_seeds", [])),
-            output_path=plot_dir / variable_filename,
+            output_path=plot_dir / f"{artifact_prefix}_{variable_filename}",
             group_key="variable",
             series_key="method",
             mean_key=f"{metric_slug}_mean",
             std_key=f"{metric_slug}_std",
             ylabel=f"Per-Variable {_metric_display_name(metric_slug)}",
-            title=f"Per-variable {_metric_display_name(metric_slug).lower()} mean +/- std across seeds",
+            title=(
+                f"{experiment_label} | Per-variable {_metric_display_name(metric_slug).lower()} mean +/- std across seeds"
+                + (f"\n{context_line}" if context_line else "")
+            ),
             group_order=[str(value) for value in payload.get("target_vars", [])],
             series_order=[str(value) for value in payload.get("methods", [])],
         )
     plot_paths["runtime_summary"] = _plot_mean_std_bars(
         records=list(payload.get("method_summary_across_seeds", [])),
-        output_path=plot_dir / "runtime_summary.png",
+        output_path=plot_dir / f"{artifact_prefix}_runtime_summary.png",
         mean_key="runtime_seconds_mean",
         std_key="runtime_seconds_std",
         ylabel="Runtime (s)",
-        title="Method runtime mean +/- std across seeds",
+        title=(
+            f"{experiment_label} | Method runtime mean +/- std across seeds"
+            + (f"\n{context_line}" if context_line else "")
+        ),
     )
     return plot_paths
 
@@ -313,7 +359,11 @@ def format_seed_sweep_summary(payload: dict[str, object]) -> str:
     """Format a compact text summary of the aggregated multi-seed results."""
     core_metrics = _resolve_core_metrics(payload.get("core_metrics"))
     lines = [
-        "Experiment Seed Sweep Summary",
+        (
+            f"{str(payload['experiment_id']).replace('_', ' ').title()} Seed Sweep Summary"
+            if payload.get("experiment_id")
+            else "Experiment Seed Sweep Summary"
+        ),
         f"seeds: {', '.join(str(seed) for seed in payload.get('seeds', []))}",
         "",
         "Backbone Factual Validation",
